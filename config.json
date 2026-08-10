@@ -1,4 +1,4 @@
 {
-  "top_n": 2000,
+  "top_n": 5000,
   "_comment": "How many top-downloaded PyPI packages to scan. Change this number, commit, and the next scan/workflow run will pick it up. Common choices: 1000, 2000, 3000. Larger numbers take longer to scan (roughly 1-2 minutes per 1000 packages)."
 }
