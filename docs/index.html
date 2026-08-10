@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WoA Python Wheel Dashboard</title>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#161920; --line:#262b35; --text:#dde3ec;
+    --muted:#8b94a3; --good:#3fd68c; --bad:#e0645f; --warn:#e0a83f;
+    --link:#6cb6f5;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size:14px; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
+  .meta { color: var(--muted); font-size: 12.5px; margin-bottom: 20px; font-family: ui-monospace, monospace; }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; }
+  .stat { background: var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:10px 16px; min-width:120px; }
+  .stat b { display:block; font-size:20px; }
+  .stat span { color: var(--muted); font-size:12px; }
+  .controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  select, input { background:var(--panel); color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:7px 10px; font-size:13px; }
+  input { flex:1; min-width:200px; }
+  .tbl-wrap { border:1px solid var(--line); border-radius:8px; overflow:auto; background:var(--panel); }
+  table { border-collapse:collapse; width:100%; min-width:680px; }
+  th { text-align:left; padding:9px 12px; font-size:11px; text-transform:uppercase;
+    letter-spacing:.06em; color:var(--muted); border-bottom:1px solid var(--line);
+    position:sticky; top:0; background:var(--panel); cursor:pointer; white-space:nowrap; }
+  td { padding:8px 12px; border-bottom:1px solid #1c202a; font-size:13px; }
+  tr:hover td { background:#1a1e27; }
+  .pkg { white-space: nowrap; }
+  .pkg a.repo { color: var(--text); font-weight:600; text-decoration:none; font-family: ui-monospace, monospace; }
+  .pkg a.repo:hover { color: var(--link); }
+  .pkg a.repo.noRepo { color: var(--muted); font-weight:400; font-style: italic; }
+  .pkg a.pypi { color: var(--muted); font-size:11px; text-decoration:none; margin-left:6px; border-bottom:1px dotted var(--muted); }
+  .pkg a.pypi:hover { color: var(--link); border-color: var(--link); }
+  .pkg .star { color: var(--warn); margin-right:4px; }
+  .yes { color: var(--good); font-weight:600; }
+  .no { color: var(--bad); font-weight:600; }
+  .unk { color: var(--muted); }
+  .badge { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:99px; }
+  .b-covered { background:#123528; color: var(--good); }
+  .b-notcovered { background:#3a2020; color: var(--bad); }
+  footer { margin-top:24px; color: var(--muted); font-size:12.5px; line-height:1.6; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>WoA Python Wheel Dashboard</h1>
+  <p class="sub">Which of the most-downloaded PyPI packages have a native Windows on Arm
+    (<code>win_arm64</code>) wheel, and whether each is already tracked at
+    <a href="https://github.com/khmyznikov/PyEnv-WoA-State/issues/1" style="color:var(--link)">khmyznikov/PyEnv-WoA-State #1</a>.</p>
+  <div class="meta" id="meta">loading data.json…</div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <select id="showN">
+      <option value="1000">Top 1000</option>
+      <option value="2000" selected>Top 2000</option>
+      <option value="3000">Top 3000</option>
+      <option value="0">All scanned</option>
+    </select>
+    <select id="filter">
+      <option value="all">All packages</option>
+      <option value="missing" selected>Missing wheel (real gap)</option>
+      <option value="gap-uncovered">Missing wheel &amp; not tracked</option>
+      <option value="native">Have native wheel</option>
+      <option value="pure">Pure Python (no wheel needed)</option>
+      <option value="no-windows">No Windows wheels at all</option>
+      <option value="sdist-only">No wheels at all (any platform)</option>
+      <option value="strategic">Strategic (AI/ML/data science)</option>
+    </select>
+    <input id="q" type="search" placeholder="filter by name…">
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th data-k="rank">Rank</th>
+        <th data-k="name">Package</th>
+        <th data-k="downloads">Downloads/mo</th>
+        <th data-k="version">Latest</th>
+        <th data-k="has_win_amd64" title="Does this package have an ordinary Windows x64 wheel today?">win x64</th>
+        <th data-k="status">win_arm64 status</th>
+        <th title="Does this package already ship an Arm64 wheel for macOS and/or Linux?">Arm64 elsewhere</th>
+        <th data-k="priority" title="Higher = more worth chasing first. See footer for the formula.">Priority ▾</th>
+        <th data-k="covered">Tracked at #1</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <footer>
+    Wheel presence checked against each package's latest PyPI release.
+    Ranking source: <a href="https://github.com/hugovk/top-pypi-packages">hugovk/top-pypi-packages</a>.
+    "Tracked at #1" is matched against a list maintained in this repo's <code>covered.json</code>,
+    kept in sync by hand with the community tracker linked above.
+    Clicking a package name opens its source repository (from PyPI's metadata) —
+    that's where to open an issue or PR about a missing wheel. The small
+    "pypi" link next to it opens the PyPI files page instead, to check wheels directly.
+    ★ marks packages on <code>strategic.json</code>, a hand-curated list of AI/ML/data-science
+    tooling considered important regardless of raw download count — these are always
+    scanned and always shown, even outside the selected "Top N" view. Priority score
+    combines download volume with feasibility signals (already built for Arm64 elsewhere,
+    stable ABI, release maturity/recency) plus a flat bonus for strategic packages — see
+    <code>compute_priority()</code> in <code>scan.py</code> for the exact formula, and treat
+    the score as a starting point for investigation, not a guarantee.
+  </footer>
+</div>
+
+<script>
+let DATA = null, sortKey = 'priority', sortDir = -1;
+
+fetch('data.json').then(r => r.json()).then(d => {
+  DATA = d;
+  const extra = d.total_scanned - d.top_n;
+  document.getElementById('meta').textContent =
+    `top ${d.top_n} by downloads` +
+    (extra > 0 ? ` + ${extra} strategic packages outside that range` : '') +
+    ` · ${d.total_scanned} scanned total · generated ${d.generated} · ranking snapshot ${d.source_rank_date}`;
+  const s = d.summary;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><b>${d.total_scanned}</b><span>packages scanned</span></div>
+    <div class="stat"><b>${s.native}</b><span>native win_arm64 wheel</span></div>
+    <div class="stat"><b>${s.pure}</b><span>pure Python (no wheel needed)</span></div>
+    <div class="stat"><b>${s.missing}</b><span>missing wheel (real gap)</span></div>
+    <div class="stat"><b>${s.gap_not_covered}</b><span>missing &amp; not tracked</span></div>
+    <div class="stat"><b>${s.strategic_missing}</b><span>strategic AI/ML &amp; missing</span></div>
+  `;
+  render();
+}).catch(e => {
+  document.getElementById('meta').textContent = 'Failed to load data.json — run scan.py first. ' + e;
+});
+
+document.getElementById('showN').addEventListener('change', render);
+document.getElementById('filter').addEventListener('change', render);
+document.getElementById('q').addEventListener('input', render);
+document.querySelectorAll('th[data-k]').forEach(th => {
+  th.addEventListener('click', () => {
+    const k = th.dataset.k;
+    if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = 1; }
+    render();
+  });
+});
+
+function render() {
+  if (!DATA) return;
+  const showN = parseInt(document.getElementById('showN').value, 10);
+  const filter = document.getElementById('filter').value;
+  const q = document.getElementById('q').value.trim().toLowerCase();
+
+  let rows = DATA.packages.filter(p => {
+    if (showN && p.rank > showN && !p.strategic) return false;
+    if (q && !p.name.toLowerCase().includes(q)) return false;
+    if (filter === 'missing' && p.status !== 'missing') return false;
+    if (filter === 'gap-uncovered' && !(p.status === 'missing' && !p.covered)) return false;
+    if (filter === 'native' && p.status !== 'native') return false;
+    if (filter === 'pure' && p.status !== 'pure') return false;
+    if (filter === 'no-windows' && p.status !== 'no-windows') return false;
+    if (filter === 'sdist-only' && p.status !== 'sdist-only') return false;
+    if (filter === 'strategic' && !p.strategic) return false;
+    return true;
+  });
+
+  rows.sort((a, b) => {
+    let x = a[sortKey], y = b[sortKey];
+    if (x === null || x === undefined) x = '';
+    if (y === null || y === undefined) y = '';
+    if (typeof x === 'boolean') x = x ? 1 : 0;
+    if (typeof y === 'boolean') y = y ? 1 : 0;
+    return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+  });
+
+  const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? Math.round(n/1e6)+'M' : Math.round(n/1e3)+'K';
+  const STATUS = {
+    native:  '<span class="yes">native</span>',
+    pure:    '<span class="unk">pure python</span>',
+    missing: '<span class="no">missing</span>',
+    'no-windows': '<span class="unk">no Windows</span>',
+    'sdist-only': '<span class="unk">sdist only</span>',
+    unknown: '<span class="unk">?</span>',
+  };
+  const coveredCell = v => v
+    ? '<span class="badge b-covered">tracked</span>'
+    : '<span class="badge b-notcovered">not tracked</span>';
+
+  document.getElementById('rows').innerHTML = rows.map(p => `
+    <tr>
+      <td>${p.rank}</td>
+      <td class="pkg">${pkgCell(p)}</td>
+      <td>${fmt(p.downloads)}</td>
+      <td>${p.version || '—'}</td>
+      <td>${winX64Cell(p)}</td>
+      <td>${STATUS[p.status] || p.status}</td>
+      <td>${arm64ElsewhereCell(p)}</td>
+      <td>${priorityCell(p)}</td>
+      <td>${coveredCell(p.covered)}</td>
+    </tr>
+  `).join('');
+}
+
+function winX64Cell(p) {
+  if (p.status === 'pure') return '<span class="yes" title="Universal wheel — works on any platform, including Windows x64">yes (universal)</span>';
+  if (p.has_win_amd64) return '<span class="yes">yes</span>';
+  if (p.has_win32) return '<span class="yes" title="32-bit only, no 64-bit wheel">win32 only</span>';
+  return '<span class="no">no</span>';
+}
+
+function arm64ElsewhereCell(p) {
+  if (p.has_macos_arm64 && p.has_linux_arm64) return '<span class="yes">mac + linux</span>';
+  if (p.has_macos_arm64) return '<span class="yes">mac</span>';
+  if (p.has_linux_arm64) return '<span class="yes">linux</span>';
+  return '<span class="no">no</span>';
+}
+
+function priorityCell(p) {
+  if (p.priority === null || p.priority === undefined) return '<span class="unk">—</span>';
+  const hints = [];
+  if (p.strategic) hints.push('on the strategic AI/ML/data-science list (+2.0 flat bonus)');
+  if (p.has_macos_arm64 || p.has_linux_arm64) hints.push('already builds for Arm64 macOS/Linux');
+  if (p.abi3) hints.push('stable ABI — one wheel fixes every Python version');
+  if (p.n_wheels >= 8) hints.push('mature multi-platform release pipeline');
+  if (p.days_since_release !== null && p.days_since_release > 730) hints.push('no release in 2+ years — may be unmaintained');
+  else if (p.days_since_release !== null && p.days_since_release > 365) hints.push('no release in over a year');
+  const title = hints.length ? hints.join('; ') : 'no notable feasibility signals';
+  return `<span title="${title}">${p.priority.toFixed(2)}</span>`;
+}
+
+function pkgCell(p) {
+  const pypiLink = `<a class="pypi" href="https://pypi.org/project/${encodeURIComponent(p.name)}/#files" target="_blank" rel="noopener" title="View wheels on PyPI">pypi</a>`;
+  const star = p.strategic ? `<span class="star" title="On the strategic AI/ML/data-science list">★</span>` : '';
+  if (p.repo_url) {
+    return `${star}<a class="repo" href="${p.repo_url}" target="_blank" rel="noopener" title="Open the project's source repository">${p.name}</a>${pypiLink}`;
+  }
+  // No known repo — fall back to the PyPI project page itself as the click target.
+  return `${star}<a class="repo noRepo" href="https://pypi.org/project/${encodeURIComponent(p.name)}/" target="_blank" rel="noopener" title="No source repo found in PyPI metadata — opening the PyPI page instead">${p.name}</a>${pypiLink}`;
+}
+</script>
+</body>
+</html>
